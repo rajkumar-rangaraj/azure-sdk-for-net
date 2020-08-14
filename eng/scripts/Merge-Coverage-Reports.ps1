@@ -8,11 +8,8 @@ Push-Location $RepoRoot
 $CoverageFiles = Get-ChildItem "*coverage.netcoreapp2.1.cobertura.xml" -Recurse -File
 $CoverageFilesString
 
-New-Item -Path ${BinDirectory} -Name CoverageFiles -ItemType Directory
-
 ForEach ($file in $CoverageFiles)
 {
-    Copy-Item -Path $file.FullName -Destination "${BinDirectory}/CoverageFiles"
     if ($CoverageFilesString)
     {
         $CoverageFilesString += ';'
@@ -25,7 +22,6 @@ Invoke-WebRequest -MaximumRetryCount 10 -Uri "https://www.nuget.org/api/v2/packa
 -OutFile "ReportGenerator.zip" | Wait-Process; Expand-Archive -Path "ReportGenerator.zip" -DestinationPath $BinDirectory
 
 Write-Output $CoverageFilesString
-
 
 &dotnet (Join-Path $BinDirectory 'tools' 'netcoreapp3.0' 'ReportGenerator.dll') "-reports:${CoverageFilesString}" "-targetdir:${RepoRoot}" "-reporttypes:Cobertura"
 

@@ -178,19 +178,9 @@ jobs:
           $(Build.SourcesDirectory)/eng/scripts/Merge-Coverage-Reports.ps1 -RepoRoot '$(Build.SourcesDirectory)' -BinDirectory '$(Build.BinariesDirectory)'
         displayName: Merge Code Coverage Reports Before Publishing
         condition: and(succeeded(), ne(variables['CodeCoverageArgs'],''))
-      - task: PublishPipelineArtifact@1
-        condition: and(succeeded(), ne(variables['CodeCoverageArgs'],''))
-        inputs:
-          artifactName: coverage
-          path: '$(Build.SourcesDirectory)/cobertura.xml'
-      - task: PublishPipelineArtifact@1
-        condition: and(succeeded(), ne(variables['CodeCoverageArgs'],''))
-        inputs:
-          artifactName: coverage2
-          path: '$(Build.BinariesDirectory)/CoverageFiles'
       - task: PublishCodeCoverageResults@1
         condition: and(succeeded(), ne(variables['CodeCoverageArgs'],''))
         displayName: 'Publish code coverage report'
         inputs:
           codeCoverageTool: 'Cobertura'
-          summaryFileLocation: '$(Build.BinariesDirectory)/CoverageFiles/coverage.netcoreapp2.1.cobertura.xml'
+          summaryFileLocation: 'Cobertura.xml'
