@@ -14,7 +14,13 @@ namespace OpenTelemetry.Exporter.AzureMonitor
 {
     internal partial class ApplicationInsightsRestClient
     {
-        internal async Task<Response<TrackResponse>> InternalTrackAsync(IEnumerable<TelemetryItem> body, CancellationToken cancellationToken = default)
+        private readonly Response defaultResponse = default;
+
+        /// <summary> This operation sends a sequence of telemetry events that will be monitored by Azure Monitor. </summary>
+        /// <param name="body"> The list of telemetry events to track. </param>
+        /// <param name="cancellationToken"> The cancellation token to use. </param>
+        /// <exception cref="ArgumentNullException"> <paramref name="body"/> is null. </exception>
+        public async Task<(Response<TrackResponse>, RequestContent content)> TrackAsync(IEnumerable<TelemetryItem> body, CancellationToken cancellationToken = default)
         {
             if (body == null)
             {
@@ -27,7 +33,63 @@ namespace OpenTelemetry.Exporter.AzureMonitor
             {
                 case 200:
                 case 206:
-                case 408:
+                case 400:
+                    {
+                        TrackResponse value = default;
+                        using var document = await JsonDocument.ParseAsync(message.Response.ContentStream, default, cancellationToken).ConfigureAwait(false);
+                        value = TrackResponse.DeserializeTrackResponse(document.RootElement);
+                        return (Response.FromValue(value, message.Response), message.Request.Content);
+                    }
+                default:
+                    throw await _clientDiagnostics.CreateRequestFailedExceptionAsync(message.Response).ConfigureAwait(false);
+            }
+        }
+
+        internal async Task<(Response<TrackResponse>, RequestContent content)> InternalTrackAsync(IEnumerable<TelemetryItem> body, CancellationToken cancellationToken = default)
+        {
+            if (body == null)
+            {
+                throw new ArgumentNullException(nameof(body));
+            }
+
+            using var message = CreateTrackRequest(body);
+            await _pipeline.SendAsync(message, cancellationToken).ConfigureAwait(false);
+            switch (message.Response.Status)
+            {
+                case 200:
+                case 206:
+                case 400:
+                case 429:
+                case 439:
+                case 500:
+                case 502:
+                case 503:
+                case 504:
+                    {
+                        TrackResponse value = default;
+                        using var document = await JsonDocument.ParseAsync(message.Response.ContentStream, default, cancellationToken).ConfigureAwait(false);
+                        value = TrackResponse.DeserializeTrackResponse(document.RootElement);
+                        return (Response.FromValue(value, message.Response), message.Request.Content);
+                    }
+                default:
+                    throw await _clientDiagnostics.CreateRequestFailedExceptionAsync(message.Response).ConfigureAwait(false);
+            }
+        }
+
+        internal async Task<Response<TrackResponse>> InternalTrackAsync(ReadOnlyMemory<byte> body, CancellationToken cancellationToken = default)
+        {
+            if (body.Length == 0)
+            {
+                throw await _clientDiagnostics.CreateRequestFailedExceptionAsync(defaultResponse).ConfigureAwait(false);
+            }
+
+            using var message = CreateTrackRequest(body);
+            await _pipeline.SendAsync(message, cancellationToken).ConfigureAwait(false);
+            switch (message.Response.Status)
+            {
+                case 200:
+                case 206:
+                case 400:
                 case 429:
                 case 439:
                 case 500:
@@ -64,6 +126,23 @@ namespace OpenTelemetry.Exporter.AzureMonitor
                 content.WriteNewLine();
             }
             request.Content = RequestContent.Create(content.ToBytes());
+            return message;
+        }
+
+        internal HttpMessage CreateTrackRequest(ReadOnlyMemory<byte> body)
+        {
+            var message = _pipeline.CreateMessage();
+            var request = message.Request;
+            request.Method = RequestMethod.Post;
+            var uri = new RawRequestUriBuilder();
+            uri.AppendRaw(host, false);
+            uri.AppendRaw("/v2", false);
+            uri.AppendPath("/track", false);
+            request.Uri = uri;
+            request.Headers.Add("Content-Type", "application/json");
+            request.Headers.Add("Accept", "application/json");
+            using var content = new NDJsonWriter();
+            request.Content = RequestContent.Create(body);
             return message;
         }
     }

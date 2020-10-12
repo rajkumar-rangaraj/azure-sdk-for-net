@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+using OpenTelemetry.Trace;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -116,6 +117,68 @@ namespace OpenTelemetry.Exporter.AzureMonitor
             }
 
             return activityType;
+        }
+
+        private struct TagState : IActivityTagEnumerator
+        {
+            internal Dictionary<string, string> partBTags;
+            internal Dictionary<string, string> partCTags;
+            internal PartBType activityType;
+            private PartBType tempActivityType;
+
+            public bool ForEach(KeyValuePair<string, object> activityTag)
+            {
+                partBTags = new Dictionary<string, string>();
+                partCTags = new Dictionary<string, string>();
+                activityType = PartBType.Unknown;
+
+                if (activityTag.Value is Array array)
+                {
+                    StringBuilder sw = new StringBuilder();
+                    foreach (var item in array)
+                    {
+                        // TODO: Consider changing it to JSon array.
+                        if (item != null)
+                        {
+                            sw.Append(item);
+                            sw.Append(',');
+                        }
+                    }
+
+                    if (sw.Length > 0)
+                    {
+                        sw.Length--;
+                    }
+
+                    partCTags.Add(activityTag.Key, sw.ToString());
+                }
+                else if (activityTag.Value != null)
+                {
+                    bool flag = false;
+                    if (!Part_B_Mapping.TryGetValue(activityTag.Key, out tempActivityType))
+                    {
+                        partCTags.Add(activityTag.Key, activityTag.Value.ToString());
+                        flag = true;
+                        // continue;
+                    }
+
+                    if (flag && (activityType == PartBType.Unknown || activityType == PartBType.Net))
+                    {
+                        activityType = tempActivityType;
+                    }
+
+                    if (flag && (tempActivityType == activityType || tempActivityType == PartBType.Net))
+                    {
+                        partBTags.Add(activityTag.Key, activityTag.Value.ToString());
+                    }
+                    else if (flag)
+                    {
+                        partCTags.Add(activityTag.Key, activityTag.Value.ToString());
+                    }
+                }
+
+                return true;
+            }
         }
     }
 }
