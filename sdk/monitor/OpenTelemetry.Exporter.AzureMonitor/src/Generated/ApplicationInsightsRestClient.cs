@@ -19,8 +19,7 @@ namespace OpenTelemetry.Exporter.AzureMonitor
 {
     internal partial class ApplicationInsightsRestClient
     {
-        private string host;
-        private ClientDiagnostics _clientDiagnostics;
+        private string host;      
         private HttpPipeline _pipeline;
 
         /// <summary> Initializes a new instance of ApplicationInsightsRestClient. </summary>

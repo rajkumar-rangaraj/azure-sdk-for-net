@@ -8,12 +8,14 @@ using System.Threading;
 using System.Threading.Tasks;
 using Azure;
 using Azure.Core;
+using Azure.Core.Pipeline;
 using OpenTelemetry.Exporter.AzureMonitor.Models;
 
 namespace OpenTelemetry.Exporter.AzureMonitor
 {
     internal partial class ApplicationInsightsRestClient
     {
+        internal ClientDiagnostics _clientDiagnostics;
         private readonly Response defaultResponse = default;
 
         /// <summary> This operation sends a sequence of telemetry events that will be monitored by Azure Monitor. </summary>
@@ -45,7 +47,7 @@ namespace OpenTelemetry.Exporter.AzureMonitor
             }
         }
 
-        internal async Task<(Response<TrackResponse>, RequestContent content)> InternalTrackAsync(IEnumerable<TelemetryItem> body, CancellationToken cancellationToken = default)
+        internal async Task<HttpMessage> InternalTrackAsync(IEnumerable<TelemetryItem> body, CancellationToken cancellationToken = default)
         {
             if (body == null)
             {
@@ -54,29 +56,11 @@ namespace OpenTelemetry.Exporter.AzureMonitor
 
             using var message = CreateTrackRequest(body);
             await _pipeline.SendAsync(message, cancellationToken).ConfigureAwait(false);
-            switch (message.Response.Status)
-            {
-                case 200:
-                case 206:
-                case 400:
-                case 429:
-                case 439:
-                case 500:
-                case 502:
-                case 503:
-                case 504:
-                    {
-                        TrackResponse value = default;
-                        using var document = await JsonDocument.ParseAsync(message.Response.ContentStream, default, cancellationToken).ConfigureAwait(false);
-                        value = TrackResponse.DeserializeTrackResponse(document.RootElement);
-                        return (Response.FromValue(value, message.Response), message.Request.Content);
-                    }
-                default:
-                    throw await _clientDiagnostics.CreateRequestFailedExceptionAsync(message.Response).ConfigureAwait(false);
-            }
+
+            return message;
         }
 
-        internal async Task<Response<TrackResponse>> InternalTrackAsync(ReadOnlyMemory<byte> body, CancellationToken cancellationToken = default)
+        internal async Task<HttpMessage> InternalTrackAsync(ReadOnlyMemory<byte> body, CancellationToken cancellationToken = default)
         {
             if (body.Length == 0)
             {
@@ -85,26 +69,8 @@ namespace OpenTelemetry.Exporter.AzureMonitor
 
             using var message = CreateTrackRequest(body);
             await _pipeline.SendAsync(message, cancellationToken).ConfigureAwait(false);
-            switch (message.Response.Status)
-            {
-                case 200:
-                case 206:
-                case 400:
-                case 429:
-                case 439:
-                case 500:
-                case 502:
-                case 503:
-                case 504:
-                    {
-                        TrackResponse value = default;
-                        using var document = await JsonDocument.ParseAsync(message.Response.ContentStream, default, cancellationToken).ConfigureAwait(false);
-                        value = TrackResponse.DeserializeTrackResponse(document.RootElement);
-                        return Response.FromValue(value, message.Response);
-                    }
-                default:
-                    throw await _clientDiagnostics.CreateRequestFailedExceptionAsync(message.Response).ConfigureAwait(false);
-            }
+
+            return message;
         }
 
         internal HttpMessage CreateTrackRequest(IEnumerable<TelemetryItem> body)

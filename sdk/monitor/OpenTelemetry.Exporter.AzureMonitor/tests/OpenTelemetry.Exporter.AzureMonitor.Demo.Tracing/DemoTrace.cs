@@ -18,7 +18,7 @@ namespace OpenTelemetry.Exporter.AzureMonitor.Demo.Tracing
                 .AddSource("Samples.SampleServer")
                 .AddSource("Samples.SampleClient")
                 .AddAzureMonitorTraceExporter(o => {
-                    o.ConnectionString = $"InstrumentationKey=Ikey;";
+                    o.ConnectionString = $"InstrumentationKey=6c49c07c-e95c-48fe-8a7b-eff230955cc5;IngestionEndpoint=https://westus2-0.in.applicationinsights.azure.com/";
                 })
                 .Build();
 

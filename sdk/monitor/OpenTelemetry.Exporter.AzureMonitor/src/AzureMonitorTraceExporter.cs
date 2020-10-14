@@ -20,9 +20,10 @@ namespace OpenTelemetry.Exporter.AzureMonitor
         public AzureMonitorTraceExporter(AzureMonitorExporterOptions options)
         {
             this.options = options ?? throw new ArgumentNullException(nameof(options));
-            ConnectionString.ConnectionStringParser.GetValues(this.options.ConnectionString, out this.instrumentationKey, out _);
+            this.options.Retry.MaxRetries = 0;
+            this.AzureMonitorTransmitter = new AzureMonitorTransmitter(this.options);
 
-            this.AzureMonitorTransmitter = new AzureMonitorTransmitter(options);
+            ConnectionString.ConnectionStringParser.GetValues(this.options.ConnectionString, out this.instrumentationKey, out _);
         }
 
         /// <inheritdoc/>

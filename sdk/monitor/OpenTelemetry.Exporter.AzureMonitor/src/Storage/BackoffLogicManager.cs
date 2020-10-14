@@ -7,163 +7,91 @@ namespace OpenTelemetry.Exporter.AzureMonitor.Storage
 {
     internal class BackoffLogicManager
     {
-        internal const int SlotDelayInSeconds = 10;
-
+        private const int SlotDelayInSeconds = 10;
         private const int MaxDelayInSeconds = 3600;
         private const int DefaultBackoffEnabledReportingIntervalInMin = 30;
 
         private static readonly Random Random = new Random();
-
         private readonly object lockConsecutiveErrors = new object();
         private readonly TimeSpan minIntervalToUpdateConsecutiveErrors;
 
-        private bool exponentialBackoffReported = false;
-        private int consecutiveErrors;
         private DateTimeOffset nextMinTimeToUpdateConsecutiveErrors = DateTimeOffset.MinValue;
 
-        public BackoffLogicManager()
+        internal BackoffLogicManager(TimeSpan defaultBackoffEnabledReportingInterval = default, TimeSpan minIntervalToUpdateConsecutiveErrors = default)
         {
-            this.DefaultBackoffEnabledReportingInterval = TimeSpan.FromMinutes(DefaultBackoffEnabledReportingIntervalInMin);
-            this.minIntervalToUpdateConsecutiveErrors = TimeSpan.FromSeconds(SlotDelayInSeconds);
+            this.DefaultBackoffEnabledReportingInterval = defaultBackoffEnabledReportingInterval == default ? TimeSpan.FromMinutes(DefaultBackoffEnabledReportingIntervalInMin) : defaultBackoffEnabledReportingInterval;
+            this.minIntervalToUpdateConsecutiveErrors = minIntervalToUpdateConsecutiveErrors == default ? TimeSpan.FromSeconds(SlotDelayInSeconds) : minIntervalToUpdateConsecutiveErrors;
             this.CurrentDelay = TimeSpan.FromSeconds(SlotDelayInSeconds);
         }
 
-        public BackoffLogicManager(TimeSpan defaultBackoffEnabledReportingInterval)
-        {
-            this.DefaultBackoffEnabledReportingInterval = defaultBackoffEnabledReportingInterval;
-            this.minIntervalToUpdateConsecutiveErrors = TimeSpan.FromSeconds(SlotDelayInSeconds);
-            this.CurrentDelay = TimeSpan.FromSeconds(SlotDelayInSeconds);
-        }
+        internal int ConsecutiveErrors { get; private set; }
 
-        internal BackoffLogicManager(TimeSpan defaultBackoffEnabledReportingInterval, TimeSpan minIntervalToUpdateConsecutiveErrors)
-            : this(defaultBackoffEnabledReportingInterval)
-        {
-            // This constructor is used from unit tests
-            this.minIntervalToUpdateConsecutiveErrors = minIntervalToUpdateConsecutiveErrors;
-        }
-
-        /// <summary>
-        /// Gets the number of consecutive errors SDK transmitter got so far while sending telemetry to backend.
-        /// </summary>
-        public int ConsecutiveErrors
-        {
-            get { return this.consecutiveErrors; }
-        }
-
-        /// <summary>
-        /// Gets the last status code SDK received from the backend.
-        /// </summary>
-        public int LastStatusCode { get; private set; }
-
-        public TimeSpan DefaultBackoffEnabledReportingInterval { get; set; }
+        internal TimeSpan DefaultBackoffEnabledReportingInterval { get; set; }
 
         internal TimeSpan CurrentDelay { get; private set; }
 
-        /// <summary>
-        /// Sets ConsecutiveErrors to 0.
-        /// </summary>
-        public void ResetConsecutiveErrors()
+        internal bool ExponentialBackoffReported { get; private set; } = false;
+
+        internal void ResetConsecutiveErrors()
         {
             lock (this.lockConsecutiveErrors)
             {
-                this.consecutiveErrors = 0;
+                this.ConsecutiveErrors = 0;
             }
         }
 
-        public void ReportBackoffEnabled(int statusCode)
+        internal void ReportBackoffEnabled(int statusCode = default)
         {
-            this.LastStatusCode = statusCode;
-
-            if (!this.exponentialBackoffReported && this.CurrentDelay > this.DefaultBackoffEnabledReportingInterval)
+            if (!this.ExponentialBackoffReported && this.CurrentDelay > this.DefaultBackoffEnabledReportingInterval)
             {
+                _ = statusCode; // To keep compiler happy, remove once the log is enabled.
                 // TelemetryChannelEventSource.Log.BackoffEnabled(this.CurrentDelay.TotalMinutes, statusCode);
-                this.exponentialBackoffReported = true;
+                this.ExponentialBackoffReported = true;
             }
 
             lock (this.lockConsecutiveErrors)
             {
-                // Do not increase number of errors more often than minimum interval (SlotDelayInSeconds)
-                // since we have 3 senders and all of them most likely would fail if we have intermittent error
                 if (DateTimeOffset.UtcNow > this.nextMinTimeToUpdateConsecutiveErrors)
                 {
-                    this.consecutiveErrors++;
+                    this.ConsecutiveErrors++;
                     this.nextMinTimeToUpdateConsecutiveErrors = DateTimeOffset.UtcNow + this.minIntervalToUpdateConsecutiveErrors;
                 }
             }
         }
 
-        public void ReportBackoffDisabled()
+        internal void ReportBackoffDisabled()
         {
-            this.LastStatusCode = 200;
-
-            if (this.exponentialBackoffReported)
+            if (this.ExponentialBackoffReported)
             {
                 // TelemetryChannelEventSource.Log.BackoffDisabled();
-                this.exponentialBackoffReported = false;
+                this.ExponentialBackoffReported = false;
+                ResetConsecutiveErrors();
             }
-        }
-
-        public TimeSpan GetBackOffTimeInterval(string headerValue)
-        {
-            TimeSpan backOffTime = this.GetBackOffTime(headerValue);
-            this.CurrentDelay = backOffTime;
-
-            return backOffTime;
         }
 
         // Calculates the time to wait before retrying in case of an error based on
         // http://en.wikipedia.org/wiki/Exponential_backoff
-        protected virtual TimeSpan GetBackOffTime(string headerValue)
+        internal TimeSpan GetBackOffTime()
         {
-            if (!TryParseRetryAfter(headerValue, out TimeSpan retryAfterTimeSpan))
+            double delayInSeconds;
+
+            if (this.ConsecutiveErrors <= 1)
             {
-                double delayInSeconds;
-
-                if (this.ConsecutiveErrors <= 1)
-                {
-                    delayInSeconds = SlotDelayInSeconds;
-                }
-                else
-                {
-                    double backOffSlot = (Math.Pow(2, this.ConsecutiveErrors) - 1) / 2;
-                    var backOffDelay = Random.Next(1, (int)Math.Min(backOffSlot * SlotDelayInSeconds, int.MaxValue));
-                    delayInSeconds = Math.Max(Math.Min(backOffDelay, MaxDelayInSeconds), SlotDelayInSeconds);
-                }
-
-                // TelemetryChannelEventSource.Log.BackoffTimeSetInSeconds(delayInSeconds);
-                retryAfterTimeSpan = TimeSpan.FromSeconds(delayInSeconds);
+                delayInSeconds = SlotDelayInSeconds;
+            }
+            else
+            {
+                double backOffSlot = (Math.Pow(2, this.ConsecutiveErrors) - 1) / 2;
+                var backOffDelay = Random.Next(1, (int)Math.Min(backOffSlot * SlotDelayInSeconds, int.MaxValue));
+                delayInSeconds = Math.Max(Math.Min(backOffDelay, MaxDelayInSeconds), SlotDelayInSeconds);
             }
 
+            // TelemetryChannelEventSource.Log.BackoffTimeSetInSeconds(delayInSeconds);
+            var retryAfterTimeSpan = TimeSpan.FromSeconds(delayInSeconds);
+
+            this.CurrentDelay = retryAfterTimeSpan;
             // TelemetryChannelEventSource.Log.BackoffInterval(retryAfterTimeSpan.TotalSeconds);
             return retryAfterTimeSpan;
-        }
-
-        private static bool TryParseRetryAfter(string retryAfter, out TimeSpan retryAfterTimeSpan)
-        {
-            retryAfterTimeSpan = TimeSpan.FromSeconds(0);
-
-            if (string.IsNullOrEmpty(retryAfter))
-            {
-                return false;
-            }
-
-            // TelemetryChannelEventSource.Log.RetryAfterHeaderIsPresent(retryAfter);
-
-            var now = DateTimeOffset.UtcNow;
-            if (DateTimeOffset.TryParse(retryAfter, out DateTimeOffset retryAfterDate))
-            {
-                if (retryAfterDate > now)
-                {
-                    retryAfterTimeSpan = retryAfterDate - now;
-                    return true;
-                }
-
-                return false;
-            }
-
-            // TelemetryChannelEventSource.Log.TransmissionPolicyRetryAfterParseFailedWarning(retryAfter);
-
-            return false;
         }
     }
 }

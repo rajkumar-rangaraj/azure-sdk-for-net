@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Timers;
@@ -57,7 +58,7 @@ namespace OpenTelemetry.Exporter.AzureMonitor.Storage
             var retentionDeadline = currentUtcDateTime - TimeSpan.FromSeconds(this.retentionPeriod);
             var timeoutDeadline = currentUtcDateTime - TimeSpan.FromSeconds(this.writeTimeout);
 
-            foreach (var file in Directory.GetFiles(this.path))
+            foreach (var file in Directory.GetFiles(this.path).OrderByDescending(f => f))
             {
                 var filePath = file;
                 if (filePath.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
