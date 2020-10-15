@@ -26,18 +26,18 @@ namespace OpenTelemetry.Exporter.AzureMonitor
     {
         private static List<int> whiteListedStatusCode = new List<int> { 429, 439, 500, 502, 503, 504 };
         private readonly ApplicationInsightsRestClient applicationInsightsRestClient;
-        private readonly AzureMonitorExporterOptions options;
         private readonly LocalFileStorage storage;
+        private readonly ClientDiagnostics clientDiagnostics;
         private static BackoffLogicManager backoffLogicManager = new BackoffLogicManager();
 
-        public AzureMonitorTransmitter(AzureMonitorExporterOptions exporterOptions)
+        public AzureMonitorTransmitter(AzureMonitorExporterOptions options)
         {
-            ConnectionStringParser.GetValues(exporterOptions.ConnectionString, out _, out string ingestionEndpoint);
-            options = exporterOptions;
-            applicationInsightsRestClient = new ApplicationInsightsRestClient(new ClientDiagnostics(options), HttpPipelineBuilder.Build(options), host: ingestionEndpoint);
-
+            ConnectionStringParser.GetValues(options.ConnectionString, out _, out string ingestionEndpoint);
+            clientDiagnostics = new ClientDiagnostics(options);
             storage = new LocalFileStorage(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "test"));
             backoffLogicManager = new BackoffLogicManager();
+            options.AddPolicy(new IngestionResponsePolicy(clientDiagnostics, storage, backoffLogicManager), HttpPipelinePosition.PerCall);
+            applicationInsightsRestClient = new ApplicationInsightsRestClient(clientDiagnostics, HttpPipelineBuilder.Build(options), host: ingestionEndpoint);
         }
 
         public async ValueTask<int> TrackAsync(IEnumerable<TelemetryItem> telemetryItems, bool async, CancellationToken cancellationToken)
@@ -56,41 +56,39 @@ namespace OpenTelemetry.Exporter.AzureMonitor
                 return 0;
             }
 
-            HttpMessage message = default;
+            int itemsAccepted = 0;
 
             try
             {
                 if (async)
                 {
-                    message = await this.applicationInsightsRestClient.InternalTrackAsync(telemetryItems, cancellationToken).ConfigureAwait(false);
+                    itemsAccepted = await this.applicationInsightsRestClient.InternalTrackAsync(telemetryItems, cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
-                    message = this.applicationInsightsRestClient.InternalTrackAsync(telemetryItems, cancellationToken).Result;
+                    itemsAccepted = this.applicationInsightsRestClient.InternalTrackAsync(telemetryItems, cancellationToken).Result;
                 }
             }
             catch (Exception ex)
             {
                 if (ex?.InnerException?.InnerException?.Source == "System.Net.Http")
                 {
-                    // Check if this required.
+                    SendTelemetryItemsToStorage(storage, telemetryItems);
                 }
 
                 // TODO: Log the exception to new event source. If we get a common logger we could just log exception to it.
                 AzureMonitorTraceExporterEventSource.Log.FailedExport(ex);
             }
 
-            // TODO: Handle exception, check telemetryItems has items
-            return ParseResponse(applicationInsightsRestClient, storage, telemetryItems, message, cancellationToken);
+            return itemsAccepted;
         }
 
-        private static void SendDataFromStorage(ApplicationInsightsRestClient applicationInsightsRestClient, LocalFileStorage storage, CancellationToken cancellationToken)
+        internal static void SendDataFromStorage(ApplicationInsightsRestClient applicationInsightsRestClient, LocalFileStorage storage)
         {
             foreach (LocalFileBlob blob in storage.GetBlobs())
             {
                 blob.Lease(10);
-                var message = applicationInsightsRestClient.InternalTrackAsync(blob.Read()).Result;
-                int itemsAccepted = ParseResponse(applicationInsightsRestClient, storage, message, cancellationToken);
+                int itemsAccepted = applicationInsightsRestClient.InternalTrackAsync(blob.Read()).Result;
                 if (itemsAccepted > 0)
                 {
                     blob.Delete();
@@ -98,90 +96,10 @@ namespace OpenTelemetry.Exporter.AzureMonitor
             }
         }
 
-        private static int ParseResponse(ApplicationInsightsRestClient applicationInsightsRestClient, LocalFileStorage storage, IEnumerable<TelemetryItem> telemetryItems, HttpMessage message, CancellationToken cancellationToken)
-        {
-            var httpStatus = message?.Response?.Status;
-            int itemsAccepted = 0;
-
-            switch (httpStatus)
-            {
-                case 200:
-                    backoffLogicManager.ReportBackoffDisabled();
-                    itemsAccepted = telemetryItems.Count(); // GetItemsAccepted(message, cancellationToken);
-                    break;
-                case 400:
-                case 429:
-                case 439:
-                    if (TryParseRetryInterval(message, out var interval))
-                    {
-                        // TODO
-                    }
-
-                    SendMessagesToStorage(storage, message);
-                    break;
-                case 500:
-                case 502:
-                case 503:
-                case 504:
-                    backoffLogicManager.ReportBackoffEnabled();
-                    backoffLogicManager.GetBackOffTime();
-                    SendMessagesToStorage(storage, message);
-                    _ = applicationInsightsRestClient.InternalTrackAsync(storage.GetBlob().Read()).Result;
-                    break;
-                case 206:
-                    if (TryParseRetryInterval(message, out interval))
-                    {
-                        // TODO
-                    }
-                    itemsAccepted = StoreFailedMessage(storage, telemetryItems, message, cancellationToken);
-                    break;
-                case null:
-                    SendTelemetryItemsToStorage(storage, telemetryItems);
-                    break;
-                default:
-                    backoffLogicManager.ReportBackoffDisabled();
-                    ReportNonRetriableStatus(applicationInsightsRestClient._clientDiagnostics, message);
-                    break;
-            }
-
-            return itemsAccepted;
-        }
-
-        private static int ParseResponse(ApplicationInsightsRestClient applicationInsightsRestClient, LocalFileStorage storage, HttpMessage message, CancellationToken cancellationToken)
-        {
-            var httpStatus = message?.Response?.Status;
-            int itemsAccepted = 0;
-
-            switch (httpStatus)
-            {
-                case 200:
-                    backoffLogicManager.ReportBackoffDisabled();
-                    itemsAccepted = GetItemsAccepted(message, cancellationToken);
-                    break;
-                case 429:
-                case 439:
-                case 500:
-                case 502:
-                case 503:
-                case 504:
-                case null:
-                    itemsAccepted = 0;
-                    break;
-                case 206:
-                    itemsAccepted = StoreFailedMessage(storage, message, cancellationToken);
-                    break;
-                default:
-                    ReportNonRetriableStatus(applicationInsightsRestClient._clientDiagnostics, message);
-                    break;
-            }
-
-            return itemsAccepted;
-        }
-
-        internal static int GetItemsAccepted(HttpMessage message, CancellationToken cancellationToken)
+        internal static int GetItemsAccepted(HttpMessage message)
         {
             int itemsAccepted = 0;
-            using (JsonDocument document = JsonDocument.ParseAsync(message.Response.ContentStream, default, cancellationToken).Result)
+            using (JsonDocument document = JsonDocument.Parse(message.Response.ContentStream, default))
             {
                 var value = TrackResponse.DeserializeTrackResponse(document.RootElement);
                 Response.FromValue(value, message.Response);
@@ -268,10 +186,10 @@ namespace OpenTelemetry.Exporter.AzureMonitor
             }
         }
 
-        internal static int StoreFailedMessage(LocalFileStorage storage, IEnumerable<TelemetryItem> telemetryItems, HttpMessage message, CancellationToken cancellationToken)
+        internal static int StoreFailedMessage(LocalFileStorage storage, IEnumerable<TelemetryItem> telemetryItems, HttpMessage message)
         {
             int itemsAccepted = 0;
-            using (JsonDocument document = JsonDocument.ParseAsync(message.Response.ContentStream, default, cancellationToken).Result)
+            using (JsonDocument document = JsonDocument.Parse(message.Response.ContentStream, default))
             {
                 var value = TrackResponse.DeserializeTrackResponse(document.RootElement);
                 Response.FromValue(value, message.Response);
@@ -293,10 +211,10 @@ namespace OpenTelemetry.Exporter.AzureMonitor
             return itemsAccepted;
         }
 
-        internal static int StoreFailedMessage(LocalFileStorage storage, HttpMessage message, CancellationToken cancellationToken)
+        internal static int StoreFailedMessage(LocalFileStorage storage, HttpMessage message)
         {
             int itemsAccepted = 0;
-            using (JsonDocument document = JsonDocument.ParseAsync(message.Response.ContentStream, default, cancellationToken).Result)
+            using (JsonDocument document = JsonDocument.Parse(message.Response.ContentStream, default))
             {
                 var value = TrackResponse.DeserializeTrackResponse(document.RootElement);
                 Response.FromValue(value, message.Response);

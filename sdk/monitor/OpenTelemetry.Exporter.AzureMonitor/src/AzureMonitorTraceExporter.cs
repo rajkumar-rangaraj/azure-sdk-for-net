@@ -4,7 +4,6 @@
 using System;
 using System.Diagnostics;
 using System.Threading;
-
 using Azure.Core.Pipeline;
 
 using OpenTelemetry.Trace;
