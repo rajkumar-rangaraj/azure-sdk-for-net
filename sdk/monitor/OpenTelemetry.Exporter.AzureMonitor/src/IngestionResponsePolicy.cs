@@ -50,7 +50,7 @@ namespace OpenTelemetry.Exporter.AzureMonitor
             {
                 case 200:
                     backoffLogicManager.ReportBackoffDisabled();
-                    itemsAccepted = telemetryItems.Count(); 
+                    itemsAccepted = telemetryItems.Count();
                     break;
                 case 400:
                 case 429:

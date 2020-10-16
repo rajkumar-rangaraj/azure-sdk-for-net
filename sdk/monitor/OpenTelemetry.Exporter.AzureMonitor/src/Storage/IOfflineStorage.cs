@@ -9,8 +9,8 @@ namespace OpenTelemetry.Exporter.AzureMonitor.Storage
     {
         IEnumerable<IOfflineBlob> GetBlobs();
 
-        LocalFileBlob GetBlob(string name = null);
+        IOfflineBlob GetBlob(string name = null);
 
-        string PutBlob(byte[] buffer, int leasePeriod = 0);
+        void PutBlob(byte[] buffer, int leasePeriod = 0);
     }
 }

@@ -115,18 +115,17 @@ namespace OpenTelemetry.Exporter.AzureMonitor.Storage
             return iterator.Current;
         }
 
-        public string PutBlob(byte[] buffer, int leasePeriod = 0)
+        public void PutBlob(byte[] buffer, int leasePeriod = 0)
         {
             if (!this.CheckStorageSize())
             {
                 // TODO: Log Error
-                return null;
+                return;
             }
 
             var blobName = GetUniqueFileName(".blob");
             var blob = new LocalFileBlob(Path.Combine(this.path, blobName));
             blob.Write(buffer, leasePeriod);
-            return blobName;
         }
 
         private static DateTime GetDateTimeFromFileName(string filePath, char separator)
@@ -269,11 +268,6 @@ namespace OpenTelemetry.Exporter.AzureMonitor.Storage
             {
                 // TODO: Log Exception
             }
-        }
-
-        LocalFileBlob IOfflineStorage.GetBlob(string name)
-        {
-            throw new NotImplementedException();
         }
     }
 }
