@@ -49,6 +49,10 @@ namespace OpenTelemetry.Exporter.AzureMonitor
             [SemanticConventions.AttributeAzureNameSpace] = PartBType.Azure,
             [SemanticConventions.AttributeEndpointAddress] = PartBType.Azure,
             [SemanticConventions.AttributeMessageBusDestination] = PartBType.Azure,
+            [SemanticConventions.AttributeKeyVaultCertificate] = PartBType.Azure,
+            [SemanticConventions.AttributeDocument] = PartBType.Azure,
+            [SemanticConventions.AttributeKey] = PartBType.Azure,
+            [SemanticConventions.AttributeUrl] = PartBType.Azure,
 
             [SemanticConventions.AttributeMessagingSystem] = PartBType.Messaging,
             [SemanticConventions.AttributeMessagingDestination] = PartBType.Messaging,

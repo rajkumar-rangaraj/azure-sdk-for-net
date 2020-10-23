@@ -137,7 +137,10 @@ namespace OpenTelemetry.Exporter.AzureMonitor
 
         public const string AttributeEndpointAddress = "peer.address";
         public const string AttributeMessageBusDestination = "message_bus.destination";
-
+        public const string AttributeKeyVaultCertificate = "certificate";
+        public const string AttributeDocument = "document";
+        public const string AttributeKey = "key";
+        public const string AttributeUrl = "url";
         public const string AttributeAzureNameSpace = "az.namespace";
     }
 }

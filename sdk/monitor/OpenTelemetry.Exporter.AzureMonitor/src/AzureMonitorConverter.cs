@@ -20,6 +20,8 @@ namespace OpenTelemetry.Exporter.AzureMonitor
     /// </summary>
     internal static class AzureMonitorConverter
     {
+        private const int VERSION2 = 2;
+
         private static readonly IReadOnlyDictionary<TelemetryType, string> Telemetry_Base_Type_Mapping = new Dictionary<TelemetryType, string>
         {
             [TelemetryType.Request] = "RequestData",
@@ -35,6 +37,8 @@ namespace OpenTelemetry.Exporter.AzureMonitor
             [TelemetryType.Message] = "Message",
             [TelemetryType.Event] = "Event",
         };
+
+        private static readonly bool IsAppService = !String.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAS-DEFAULT-HOSTNAME"));
 
         internal static List<TelemetryItem> Convert(Batch<Activity> batchActivity, string instrumentationKey)
         {
@@ -119,40 +123,58 @@ namespace OpenTelemetry.Exporter.AzureMonitor
 
             if (telemetryType == TelemetryType.Request)
             {
-                var url = activity.Kind == ActivityKind.Server ? HttpHelper.GetUrl(partBTags) : GetMessagingUrl(partBTags);
-                var statusCode = HttpHelper.GetHttpStatusCode(partBTags);
-                var success = HttpHelper.GetSuccessFromHttpStatusCode(statusCode);
-                var request = new RequestData(2, activity.Context.SpanId.ToHexString(), activity.Duration.ToString("c", CultureInfo.InvariantCulture), success, statusCode)
+                string source = null;
+                string statusCode = string.Empty;
+                string url = null;
+                bool success = true;
+
+                switch (activityType)
+                {
+                    case PartBType.Http:
+                        url = activity.Kind == ActivityKind.Server ? HttpHelper.GetUrl(partBTags) : AzureMonitorConverter.GetMessagingUrl(partBTags);
+                        statusCode = HttpHelper.GetHttpStatusCode(partBTags);
+                        success = HttpHelper.GetSuccessFromHttpStatusCode(statusCode);
+                        source = IsAppService ? HttpHelper.GetHost(partBTags) : null;
+                        break;
+                    case PartBType.Azure:
+                        AzureHelper.ExtractProperties(partBTags, out _, out source);
+                        break;
+                }
+
+                RequestData request = new RequestData(VERSION2, activity.Context.SpanId.ToHexString(), activity.Duration.ToString("c", CultureInfo.InvariantCulture), success, statusCode)
                 {
                     Name = activity.DisplayName,
                     Url = url,
-                    // TODO: Handle request.source.
+                    Source = source
                 };
 
-                // TODO: Handle activity.TagObjects, extract well-known tags
                 AddPropertiesToTelemetry(request.Properties, PartCTags);
                 telemetry.BaseData = request;
             }
             else if (telemetryType == TelemetryType.Dependency)
             {
-                var dependency = new RemoteDependencyData(2, activity.DisplayName, activity.Duration.ToString("c", CultureInfo.InvariantCulture))
+                var dependency = new RemoteDependencyData(VERSION2, activity.DisplayName, activity.Duration.ToString("c", CultureInfo.InvariantCulture))
                 {
                     Id = activity.Context.SpanId.ToHexString()
                 };
 
-                // TODO: Handle activity.TagObjects
-                // ExtractPropertiesFromTags(dependency.Properties, activity.Tags);
-
-                if (activityType == PartBType.Http)
+                switch (activityType)
                 {
-                    dependency.Data = HttpHelper.GetUrl(partBTags);
-                    dependency.Type = "HTTP"; // TODO: Parse for storage / SB.
-                    var statusCode = HttpHelper.GetHttpStatusCode(partBTags);
-                    dependency.ResultCode = statusCode;
-                    dependency.Success = HttpHelper.GetSuccessFromHttpStatusCode(statusCode);
+                    case PartBType.Http:
+                        dependency.Type = "HTTP";
+                        var statusCode = HttpHelper.GetHttpStatusCode(partBTags);
+                        dependency.ResultCode = statusCode;
+                        dependency.Success = HttpHelper.GetSuccessFromHttpStatusCode(statusCode);
+                        dependency.Data = HttpHelper.GetUrl(partBTags);
+                        dependency.Target = HttpHelper.GetHost(partBTags);
+                        break;
+                    case PartBType.Azure:
+                        AzureHelper.ExtractProperties(partBTags, out var type, out var target);
+                        dependency.Target = target;
+                        dependency.Type = type;
+                        break;
                 }
 
-                // TODO: Handle dependency.target.
                 AddPropertiesToTelemetry(dependency.Properties, PartCTags);
                 telemetry.BaseData = dependency;
             }
