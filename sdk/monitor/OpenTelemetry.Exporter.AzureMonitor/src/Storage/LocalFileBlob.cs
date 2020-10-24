@@ -6,9 +6,9 @@ using System.IO;
 
 namespace OpenTelemetry.Exporter.AzureMonitor.Storage
 {
-    internal class LocalFileBlob : IOfflineBlob
+    public class LocalFileBlob : IPersistentBlob
     {
-        internal LocalFileBlob(string fullPath)
+        public LocalFileBlob(string fullPath)
         {
             this.FullPath = fullPath;
         }
@@ -21,15 +21,15 @@ namespace OpenTelemetry.Exporter.AzureMonitor.Storage
             {
                 return File.ReadAllBytes(this.FullPath);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // TODO: Log Exception
+                SharedEventSource.Log.Warning($"Reading a blob from file {this.FullPath} has failed.", ex);
             }
 
             return null;
         }
 
-        public void Write(byte[] buffer, int leasePeriod = 0)
+        public IPersistentBlob Write(byte[] buffer, int leasePeriodMilliseconds = 0)
         {
             string path = this.FullPath + ".tmp";
 
@@ -37,24 +37,26 @@ namespace OpenTelemetry.Exporter.AzureMonitor.Storage
             {
                 File.WriteAllBytes(path, buffer);
 
-                if (leasePeriod > 0)
+                if (leasePeriodMilliseconds > 0)
                 {
-                    var timestamp = DateTime.Now.ToUniversalTime() + TimeSpan.FromSeconds(leasePeriod);
-                    this.FullPath += $@"{timestamp:yyy-MM-ddTHHmmss.ffffff}.lock";
+                    var timestamp = DateTime.Now.ToUniversalTime() + TimeSpan.FromMilliseconds(leasePeriodMilliseconds);
+                    this.FullPath += $"@{timestamp:yyy-MM-ddTHHmmss.ffffff}.lock";
                 }
 
                 File.Move(path, this.FullPath);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // TODO: Log Exception
+                SharedEventSource.Log.Warning($"Writing a blob to file {path} has failed.", ex);
             }
+
+            return this;
         }
 
-        public void Lease(int seconds)
+        public IPersistentBlob Lease(int leasePeriodMilliseconds)
         {
             var path = this.FullPath;
-            var leaseTimestamp = DateTime.Now.ToUniversalTime() + TimeSpan.FromSeconds(seconds);
+            var leaseTimestamp = DateTime.Now.ToUniversalTime() + TimeSpan.FromMilliseconds(leasePeriodMilliseconds);
             if (path.EndsWith(".lock", StringComparison.OrdinalIgnoreCase))
             {
                 path = path.Substring(0, path.LastIndexOf('@'));
@@ -66,12 +68,13 @@ namespace OpenTelemetry.Exporter.AzureMonitor.Storage
             {
                 File.Move(this.FullPath, path);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // TODO: Log Exception
+                SharedEventSource.Log.Warning($"Acquiring a lease to file {this.FullPath} has failed.", ex);
             }
 
             this.FullPath = path;
+            return this;
         }
 
         public void Delete()
@@ -83,9 +86,9 @@ namespace OpenTelemetry.Exporter.AzureMonitor.Storage
                     File.Delete(this.FullPath);
                 }
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // Log Exception
+                SharedEventSource.Log.Warning($"Deletion of file blob {this.FullPath} has failed.", ex);
             }
         }
     }

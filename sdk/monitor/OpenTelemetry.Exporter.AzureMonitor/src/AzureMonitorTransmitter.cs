@@ -158,7 +158,7 @@ namespace OpenTelemetry.Exporter.AzureMonitor
             {
                 MemoryStream stream = new MemoryStream();
                 message.Response.ContentStream.CopyTo(stream);
-                storage.PutBlob(stream.ToArray());
+                storage.CreateBlob(stream.ToArray());
             }
             catch // (Exception ex)
             {
@@ -178,7 +178,7 @@ namespace OpenTelemetry.Exporter.AzureMonitor
                     content.WriteNewLine();
                 }
 
-                storage.PutBlob(content.ToBytes().Span.ToArray());
+                storage.CreateBlob(content.ToBytes().Span.ToArray());
             }
             catch // (Exception ex)
             {
@@ -205,7 +205,7 @@ namespace OpenTelemetry.Exporter.AzureMonitor
                     }
                 }
 
-                storage.PutBlob(content.ToBytes().Span.ToArray());
+                storage.CreateBlob(content.ToBytes().Span.ToArray());
             }
 
             return itemsAccepted;
@@ -238,7 +238,7 @@ namespace OpenTelemetry.Exporter.AzureMonitor
                     }
                 }
                 writer.Flush();
-                storage.PutBlob(writeMemoryStream1.ToArray());
+                storage.CreateBlob(writeMemoryStream1.ToArray());
             }
 
             return itemsAccepted;
