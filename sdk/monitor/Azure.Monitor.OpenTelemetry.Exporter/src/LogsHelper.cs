@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -14,62 +15,72 @@ namespace Azure.Monitor.OpenTelemetry.Exporter
 {
     internal class LogsHelper
     {
-        private const int version = 2;
+        private const int Version = 2;
 
         internal static List<TelemetryItem> OtelToAzureMonitorLogs(Batch<LogRecord> batchLogRecord, string roleName, string roleInstance, string instrumentationKey)
         {
             List<TelemetryItem> telemetryItems = new List<TelemetryItem>();
             TelemetryItem telemetryItem;
-            string problemId;
-            string methodName = "UnknownMethod";
-            int methodOffset = System.Diagnostics.StackFrame.OFFSET_UNKNOWN;
 
             foreach (var logRecord in batchLogRecord)
             {
-                if (logRecord.Exception != null)
-                {
-                    var exceptionType = logRecord.Exception.GetType().FullName;
-                    var strackTrace = new StackTrace(logRecord.Exception);
-                    var exceptionStackFrame = strackTrace.GetFrame(1);
-
-                    if (exceptionStackFrame != null)
-                    {
-                        MethodBase methodBase = exceptionStackFrame.GetMethod();
-
-                        if (methodBase != null)
-                        {
-                            methodName = (methodBase.DeclaringType?.FullName ?? "Global") + "." + methodBase.Name;
-                            methodOffset = exceptionStackFrame.GetILOffset();
-                        }
-                    }
-
-                    if (methodOffset == System.Diagnostics.StackFrame.OFFSET_UNKNOWN)
-                    {
-                        problemId = exceptionType + " at " + methodName;
-                    }
-                    else
-                    {
-                        problemId = exceptionType + " at " + methodName + ":" + methodOffset.ToString(CultureInfo.InvariantCulture);
-                    }
-
-                    TelemetryExceptionDetails t = new TelemetryExceptionDetails(logRecord.State.ToString());
-                    t.Stack = logRecord.Exception.StackTrace;
-                    t.TypeName = logRecord.Exception.GetType().FullName;
-                    t.HasFullStack = logRecord.Exception.StackTrace != null;
-                }
-
                 telemetryItem = new TelemetryItem(logRecord);
                 telemetryItem.InstrumentationKey = instrumentationKey;
                 telemetryItem.SetResource(roleName, roleInstance);
-                telemetryItem.Data = new MonitorBase
+                if (logRecord?.Exception != null)
                 {
-                    BaseType = "MessageData",
-                    BaseData = new MessageData(version, logRecord),
-                };
+                    telemetryItem.Data = new MonitorBase
+                    {
+                        BaseType = "ExceptionData",
+                        BaseData = new TelemetryExceptionData(Version, logRecord),
+                    };
+                }
+                else
+                {
+                    telemetryItem.Data = new MonitorBase
+                    {
+                        BaseType = "MessageData",
+                        BaseData = new MessageData(Version, logRecord),
+                    };
+                }
+
                 telemetryItems.Add(telemetryItem);
             }
 
             return telemetryItems;
+        }
+
+        internal static string GetProblemId(Exception exception)
+        {
+            string methodName = "UnknownMethod";
+            int methodOffset = System.Diagnostics.StackFrame.OFFSET_UNKNOWN;
+            string problemId = null;
+
+            var exceptionType = exception.GetType().FullName;
+            var strackTrace = new StackTrace(exception);
+            var exceptionStackFrame = strackTrace.GetFrame(1);
+
+            if (exceptionStackFrame != null)
+            {
+                MethodBase methodBase = exceptionStackFrame.GetMethod();
+
+                if (methodBase != null)
+                {
+                    methodName = (methodBase.DeclaringType?.FullName ?? "Global") + "." + methodBase.Name;
+                    methodOffset = exceptionStackFrame.GetILOffset();
+                }
+            }
+
+            if (methodOffset == System.Diagnostics.StackFrame.OFFSET_UNKNOWN)
+            {
+                problemId = exceptionType + " at " + methodName;
+            }
+            else
+            {
+                problemId = exceptionType + " at " + methodName + ":" + methodOffset.ToString(CultureInfo.InvariantCulture);
+            }
+
+            return problemId;
         }
 
         /// <summary>
