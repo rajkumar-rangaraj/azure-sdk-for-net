@@ -1,9 +1,10 @@
 ﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+using System;
 using Azure.Monitor.OpenTelemetry.Exporter;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 
@@ -18,52 +19,125 @@ namespace Azure.Monitor.OpenTelemetry
         /// Adds Azure Monitor OpenTelemetry into service collection.
         /// </summary>
         /// <param name="services"><see cref="IServiceCollection"/>.</param>
-        /// <param name="configuration"><see cref="IConfiguration"/>.</param>
+        /// <param name="configureAzureMonitorOpenTelemetry">Callback action for configuring <see cref="AzureMonitorOpenTelemetryOptions"/>.</param>
+        /// <param name="name">Name which is used when retrieving options.</param>
         /// <returns><see cref="IServiceCollection"/></returns>
-        public static IServiceCollection AddAzureMonitorOpenTelemetry(this IServiceCollection services, IConfiguration configuration)
+        public static IServiceCollection AddAzureMonitorOpenTelemetry(this IServiceCollection services, Action<AzureMonitorOpenTelemetryOptions>? configureAzureMonitorOpenTelemetry = null, string? name = null)
         {
-            var options = new AzureMonitorOpenTelemetryOptions();
-            configuration.Bind(options);
-            return services.AddAzureMonitorOpenTelemetry(options);
-        }
+            if (services == null)
+            {
+                throw new ArgumentNullException(nameof(services));
+            }
 
-        /// <summary>
-        /// Adds Azure Monitor OpenTelemetry into service collection.
-        /// </summary>
-        /// <param name="services"><see cref="IServiceCollection"/>.</param>
-        /// <param name="options">The <see cref="AzureMonitorOpenTelemetryOptions" /> instance for configuration.</param>
-        /// <returns><see cref="IServiceCollection"/></returns>
-        public static IServiceCollection AddAzureMonitorOpenTelemetry(this IServiceCollection services, AzureMonitorOpenTelemetryOptions? options = null)
-        {
-            options ??= new AzureMonitorOpenTelemetryOptions();
+            name ??= Options.DefaultName;
+
+            if (configureAzureMonitorOpenTelemetry != null)
+            {
+                services.Configure(name, configureAzureMonitorOpenTelemetry);
+            }
 
             var builder = services.AddOpenTelemetry();
 
-            if (options.EnableTraces)
+            builder.WithTracing(b => b
+                            .AddAspNetCoreInstrumentation()
+                            .AddAzureMonitorTraceExporter());
+
+            builder.WithMetrics(b => b
+                            .AddAspNetCoreInstrumentation()
+                            .AddAzureMonitorMetricExporter());
+
+            ServiceDescriptor? sdkTracerProviderServiceRegistration = null;
+            ServiceDescriptor? sdkMeterProviderServiceRegistration = null;
+
+            foreach (var service in services)
             {
-                builder.WithTracing(b => b
-                             .AddAspNetCoreInstrumentation()
-                             .AddAzureMonitorTraceExporter(o =>
-                             {
-                                 o.ConnectionString = options.ConnectionString;
-                                 o.DisableOfflineStorage = options.DisableOfflineStorage;
-                                 o.StorageDirectory = options.StorageDirectory;
-                             }));
+                if (service.ServiceType == typeof(TracerProvider))
+                {
+                    sdkTracerProviderServiceRegistration = service;
+                }
+                else if (service.ServiceType == typeof(MeterProvider))
+                {
+                    sdkMeterProviderServiceRegistration = service;
+                }
             }
 
-            if (options.EnableMetrics)
+            if (sdkTracerProviderServiceRegistration?.ImplementationFactory == null ||
+                sdkMeterProviderServiceRegistration?.ImplementationFactory == null)
             {
-                builder.WithMetrics(b => b
-                             .AddAspNetCoreInstrumentation()
-                             .AddAzureMonitorMetricExporter(o =>
-                             {
-                                 o.ConnectionString = options.ConnectionString;
-                                 o.DisableOfflineStorage = options.DisableOfflineStorage;
-                                 o.StorageDirectory = options.StorageDirectory;
-                             }));
+                throw new InvalidOperationException("OpenTelemetry SDK has changed its registration mechanism. Panic!");
             }
+
+            // We looped through the registered services so that we can take over
+            // the SDK registrations.
+
+            services.Remove(sdkTracerProviderServiceRegistration);
+            services.Remove(sdkMeterProviderServiceRegistration);
+
+            // Now we register our own services for TracerProvider & MeterProvider
+            // so that we can return no-op versions when it isn't enabled.
+
+            services.AddSingleton(sp => {
+                var options = sp.GetRequiredService<IOptionsMonitor<AzureMonitorOpenTelemetryOptions>>().Get(name);
+                if (!options.EnableTraces)
+                {
+                    return new NoopTracerProvider();
+                }
+                else
+                {
+                    SetValueToExporterOptions(sp, options);
+                    var sdkProviderWrapper = sp.GetRequiredService<SdkProviderWrapper>();
+                    sdkProviderWrapper.SdkTracerProvider = (TracerProvider)sdkTracerProviderServiceRegistration.ImplementationFactory(sp);
+                    return sdkProviderWrapper.SdkTracerProvider;
+                }
+            });
+
+            services.AddSingleton(sp => {
+                var options = sp.GetRequiredService<IOptionsMonitor<AzureMonitorOpenTelemetryOptions>>().Get(name);
+                if (!options.EnableMetrics)
+                {
+                    return new NoopMeterProvider();
+                }
+                else
+                {
+                    SetValueToExporterOptions(sp, options);
+                    var sdkProviderWrapper = sp.GetRequiredService<SdkProviderWrapper>();
+                    sdkProviderWrapper.SdkMeterProvider = (MeterProvider)sdkMeterProviderServiceRegistration.ImplementationFactory(sp);
+                    return sdkProviderWrapper.SdkMeterProvider;
+                }
+            });
+
+            // SdkProviderWrapper is here to make sure the SDK services get properly
+            // shutdown when the service provider is disposed.
+            services.AddSingleton<SdkProviderWrapper>();
 
             return services;
+        }
+
+        private static void SetValueToExporterOptions(IServiceProvider sp, AzureMonitorOpenTelemetryOptions options)
+        {
+            var exporterOptions = sp.GetRequiredService<IOptionsMonitor<AzureMonitorExporterOptions>>().Get("");
+            exporterOptions.ConnectionString = options.ConnectionString;
+            exporterOptions.DisableOfflineStorage = options.DisableOfflineStorage;
+            exporterOptions.StorageDirectory = options.StorageDirectory;
+        }
+
+        private sealed class NoopTracerProvider : TracerProvider
+        {
+        }
+
+        private sealed class NoopMeterProvider : MeterProvider
+        {
+        }
+
+        private sealed class SdkProviderWrapper : IDisposable
+        {
+            public TracerProvider? SdkTracerProvider;
+            public MeterProvider? SdkMeterProvider;
+            public void Dispose()
+            {
+                this.SdkTracerProvider?.Dispose();
+                this.SdkMeterProvider?.Dispose();
+            }
         }
     }
 }
