@@ -50,12 +50,18 @@ namespace Azure.Monitor.OpenTelemetry
 
                 if (logExporterOptions.EnableLogs)
                 {
+                    logging.AddAzMonLogger(o =>
+                    {
+                        logExporterOptions.Clone(o);
+                    });
+                    logging.Services.Configure(configureAzureMonitorOpenTelemetry);
                     logging.AddOpenTelemetry(builderOptions =>
                     {
                         builderOptions.IncludeFormattedMessage = true;
                         builderOptions.ParseStateValues = true;
                         builderOptions.IncludeScopes = false;
                         builderOptions.AddAzureMonitorLogExporter(o => logExporterOptions.SetValueToExporterOptions(o));
+                        // builderOptions.AddAzureMonitorLogExporter(o => o.ConnectionString = "InstrumentationKey=00000000-0000-0000-0000-000000000000");
                     });
                 }
             });
