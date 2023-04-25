@@ -12,6 +12,7 @@ using Microsoft.Extensions.Logging;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenTelemetry().UseAzureMonitor();
+builder.Services.Configure<ApplicationInsightsSamplerOptions>(options => { options.samplingRatio = 0.5F; });
 
 /*
 builder.Services.AddOpenTelemetry().UseAzureMonitor(o =>

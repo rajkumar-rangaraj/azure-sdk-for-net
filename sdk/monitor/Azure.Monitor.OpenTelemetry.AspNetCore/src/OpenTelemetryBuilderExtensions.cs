@@ -8,7 +8,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OpenTelemetry;
-using OpenTelemetry.Extensions.AzureMonitor;
+using OpenTelemetry.Instrumentation.AspNetCore;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
@@ -94,7 +94,12 @@ namespace Azure.Monitor.OpenTelemetry.AspNetCore
                             .AddAspNetCoreInstrumentation()
                             .AddHttpClientInstrumentation()
                             .AddSqlClientInstrumentation()
-                            .SetSampler(new ApplicationInsightsSampler(1.0F))
+                            // .SetSampler(new ApplicationInsightsSampler(1.0F))
+                            .SetSampler(sp =>
+                                            {
+                                                var options = sp.GetRequiredService<IOptionsMonitor<ApplicationInsightsSamplerOptions>>().Get(Options.DefaultName);
+                                                return new ApplicationInsightsSampler(options);
+                                            })
                             .AddAzureMonitorTraceExporter());
 
             builder.WithMetrics(b => b
@@ -130,6 +135,8 @@ namespace Azure.Monitor.OpenTelemetry.AspNetCore
                     {
                         azureMonitorOptions.Get(Options.DefaultName).SetValueToExporterOptions(exporterOptions);
                     });
+
+            builder.Services.Configure<ApplicationInsightsSamplerOptions>(options => { options.samplingRatio = 1.0F; });
 
             return builder;
         }
