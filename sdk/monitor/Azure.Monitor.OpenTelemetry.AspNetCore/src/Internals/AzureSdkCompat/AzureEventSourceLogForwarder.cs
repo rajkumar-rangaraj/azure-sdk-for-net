@@ -54,12 +54,19 @@ namespace Azure.Monitor.OpenTelemetry.AspNetCore.Internals.AzureSdkCompat
         private void LogEvent(EventWrittenEventArgs eventData)
         {
             var logger = _loggers.GetOrAdd(eventData.EventSource.Name, name => _loggerFactory!.CreateLogger(ToLoggerName(name)));
+            logger.Log(MapLevel(eventData.Level), new EventId(eventData.EventId, eventData.EventName), new EventSourceEvent(eventData), null, _formatMessage);
+        }
+
+        private void LogFilteringEvent(EventWrittenEventArgs eventData)
+        {
+            var logger = _loggers.GetOrAdd(eventData.EventSource.Name, name => _loggerFactory!.CreateLogger(ToLoggerName(name)));
             var isInEventSourceSet = IsInEventSourceSet(eventData.EventSource.Name);
+            var logLevel = MapLevel(eventData.Level);
 
             // Log only if the event is not in the event source set or the log level is >= Warning
             if (isInEventSourceSet || logLevel >= LogLevel.Warning)
             {
-                logger.Log(MapLevel(eventData.Level), new EventId(eventData.EventId, eventData.EventName), new EventSourceEvent(eventData), null, _formatMessage);
+                logger.Log(logLevel, new EventId(eventData.EventId, eventData.EventName), new EventSourceEvent(eventData), null, _formatMessage);
             }
         }
 
@@ -113,7 +120,14 @@ namespace Azure.Monitor.OpenTelemetry.AspNetCore.Internals.AzureSdkCompat
         {
             if (_loggerFactory != null)
             {
-                _listener ??= new AzureEventSourceListener((e, s) => LogEvent(e), EventLevel.Verbose);
+                if (_eventSourceSet.Count == 0 && _wildcardLoggerPatterns.Count == 0)
+                {
+                    _listener ??= new AzureEventSourceListener((e, s) => LogEvent(e), EventLevel.Warning);
+                }
+                else
+                {
+                    _listener ??= new AzureEventSourceListener((e, s) => LogFilteringEvent(e), EventLevel.Verbose);
+                }
             }
 
             return Task.CompletedTask;
