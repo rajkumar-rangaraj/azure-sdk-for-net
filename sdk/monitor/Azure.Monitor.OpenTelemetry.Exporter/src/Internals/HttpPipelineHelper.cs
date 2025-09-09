@@ -14,6 +14,7 @@ using OpenTelemetry.PersistentStorage.Abstractions;
 using Azure.Monitor.OpenTelemetry.Exporter.Internals.PersistentStorage;
 using System.Diagnostics.CodeAnalysis;
 using Azure.Monitor.OpenTelemetry.Exporter.Internals.ConnectionString;
+using Azure.Monitor.OpenTelemetry.Exporter.Internals.CustomerSdkStats;
 using Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics;
 using System.Collections.Generic;
 
@@ -95,6 +96,24 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
             }
 
             return content.ToBytes().ToArray();
+        }
+
+        internal static (byte[] Content, Dictionary<string, int> TelemetryTypeCounts) GetSerializedContentWithCounts(IEnumerable<TelemetryItem> body)
+        {
+            var telemetryTypeCounts = new Dictionary<string, int>();
+
+            using var content = new NDJsonWriter();
+            foreach (var item in body)
+            {
+                // Count telemetry types during serialization
+                var telemetryType = TelemetryTypeMapper.MapTelemetryType(item.Data?.BaseType);
+                telemetryTypeCounts[telemetryType] = telemetryTypeCounts.TryGetValue(telemetryType, out var count) ? count + 1 : 1;
+
+                content.JsonWriter.WriteObjectValue(item);
+                content.WriteNewLine();
+            }
+
+            return (content.ToBytes().ToArray(), telemetryTypeCounts);
         }
 
         internal static bool TryGetRequestContent(RequestContent? content, [NotNullWhen(true)] out byte[]? requestContent)

@@ -14,6 +14,7 @@ using OpenTelemetry.Logs;
 using System;
 using OpenTelemetry.Trace;
 using Azure.Monitor.OpenTelemetry.Exporter.Internals;
+using Azure.Monitor.OpenTelemetry.Exporter.Internals.CustomerSdkStats;
 using OpenTelemetry.Metrics;
 
 namespace Azure.Monitor.OpenTelemetry.Exporter
@@ -95,7 +96,10 @@ namespace Azure.Monitor.OpenTelemetry.Exporter
 
                 var exporterOptions = serviceProvider!.GetRequiredService<IOptionsMonitor<AzureMonitorExporterOptions>>().Get(Options.DefaultName);
                 meterProviderBuilder.AddReader(new PeriodicExportingMetricReader(new AzureMonitorMetricExporter(exporterOptions))
-                    { TemporalityPreference = MetricReaderTemporalityPreference.Delta });
+                { TemporalityPreference = MetricReaderTemporalityPreference.Delta });
+
+                // Register customer SDK stats if enabled
+                CustomerSdkStatsRegistration.RegisterCustomerSdkStats(builder.Services, exporterOptions);
             });
 
             // Register Manager as a singleton

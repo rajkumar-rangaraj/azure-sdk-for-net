@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core.Pipeline;
 using Azure.Monitor.OpenTelemetry.Exporter.Internals.ConnectionString;
+using Azure.Monitor.OpenTelemetry.Exporter.Internals.CustomerSdkStats;
 using Azure.Monitor.OpenTelemetry.Exporter.Internals.Diagnostics;
 using Azure.Monitor.OpenTelemetry.Exporter.Internals.PersistentStorage;
 using Azure.Monitor.OpenTelemetry.Exporter.Internals.Platform;
@@ -166,13 +167,28 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
                 return result;
             }
 
+            // Conditionally compute telemetry type counts during serialization for customer SDK stats
+            byte[] requestContent;
+            Dictionary<string, int>? telemetryTypeCounts = null;
+
+            if (CustomerSdkStatsHelper.IsEnabled())
+            {
+                var (content, counts) = HttpPipelineHelper.GetSerializedContentWithCounts(telemetryItems);
+                requestContent = content;
+                telemetryTypeCounts = counts;
+            }
+            else
+            {
+                requestContent = HttpPipelineHelper.GetSerializedContent(telemetryItems);
+            }
+
             try
             {
                 if (_transmissionStateManager.State == TransmissionState.Closed)
                 {
                     using var httpMessage = async ?
-                    await _applicationInsightsRestClient.InternalTrackAsync(telemetryItems, cancellationToken).ConfigureAwait(false) :
-                    _applicationInsightsRestClient.InternalTrackAsync(telemetryItems, cancellationToken).Result;
+                    await _applicationInsightsRestClient.InternalTrackAsync(requestContent, cancellationToken).ConfigureAwait(false) :
+                    _applicationInsightsRestClient.InternalTrackAsync(requestContent, cancellationToken).Result;
 
                     result = HttpPipelineHelper.IsSuccess(httpMessage);
 
@@ -186,11 +202,16 @@ namespace Azure.Monitor.OpenTelemetry.Exporter.Internals
                         _transmissionStateManager.ResetConsecutiveErrors();
                         _transmissionStateManager.CloseTransmission();
                         AzureMonitorExporterEventSource.Log.TransmissionSuccess(origin, _isAadEnabled, _connectionVars.InstrumentationKey);
+
+                        // Track success for customer SDK stats
+                        if (telemetryTypeCounts != null)
+                        {
+                            CustomerSdkStatsHelper.TrackSuccess(telemetryTypeCounts);
+                        }
                     }
                 }
                 else
                 {
-                    byte[] requestContent = HttpPipelineHelper.GetSerializedContent(telemetryItems);
                     if (_fileBlobProvider != null)
                     {
                         result = _fileBlobProvider.SaveTelemetry(requestContent);
